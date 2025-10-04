@@ -1,0 +1,20 @@
+# requirements.txt — PDF Viewer + OCR (cleaned)
+# ------------------------------------------------
+# Streamlit 本体（st.pdf を含む）。1.38+ で st.pdf が利用可。
+streamlit[pdf]>=1.38.0,<2.0
+
+# PDF 閲覧・処理
+PyMuPDF>=1.24.10            # fitz: PDFテキスト/サムネ・情報取得
+streamlit-pdf-viewer>=0.0.12 # pdf.js 埋め込み（フォールバックや比較用途）
+
+# OCR
+ocrmypdf>=16.0.0             # OCR パイプライン（要: tesseract, qpdf, ghostscript などシステム依存）
+
+# 表データ（Excel）
+pandas>=2.0.0
+openpyxl>=3.1.0              # .xlsx 読み込み
+XlsxWriter>=3.1.0            # .xlsx 書き出し (engine="xlsxwriter")
+xlrd==1.2.0                  # .xls 読み取り（1.x 系で固定）
+
+# 画像処理（Streamlit の間接依存だが明示しておくと安定）
+Pillow>=10.0.0

@@ -1,0 +1,53 @@
+# settings.toml
+# プロジェクト名：docs_manager_app
+
+[env]
+# 使用する環境（Develop / Mac / Server から選択）
+location = "Mac"
+
+# ---- マウント定義 ----
+[mounts]
+# 2つの物理ボリュームを論理名で定義
+SSD   = '/Volumes/Extreme SSD'
+Pro   = '/Volumes/Extreme Pro'
+Server = '/srv/ssd'
+
+# ---- 環境ごとのパス設定 ----
+
+[locations.Mac]
+pdf_root            = 'project:data/pdf'
+converted_root      = 'project:data/converted_pdf'
+text_root           = 'project:data/text'
+library_root        = 'project:data/library'
+docs_root           = 'project:data/docs'
+
+# Mac 環境では Pro 側を原本として利用
+original_docs_root  = 'mount:Pro'
+organized_docs_root  = 'mount:SSD'
+
+
+[locations.Develop]
+pdf_root            = 'project:data/pdf'
+converted_root      = 'project:data/converted_pdf'
+text_root           = 'project:data/text'
+library_root        = 'project:data/library'
+docs_root           = 'project:data/docs'
+
+# 開発環境では SSD 側を原本として利用（必要に応じて Pro に切替可）
+original_docs_root  = 'mount:SSD'
+organized_docs_root  = 'mount:SSD'
+
+[locations.Server]
+pdf_root            = 'mount:Server/projects/pdf'
+converted_root      = 'mount:Server/projects/converted_pdf'
+text_root           = 'mount:Server/projects/text'
+library_root        = 'project:data/library'
+docs_root           = 'project:data/docs'
+
+# サーバ側は /srv/ssd/originals を原本ルートと想定
+original_docs_root  = 'mount:Server/originals'
+organized_docs_root  = 'mount:SSD'
+
+# ---- 共通アプリ設定 ----
+[app]
+available_presets = ['Develop', 'Mac', 'Server']
