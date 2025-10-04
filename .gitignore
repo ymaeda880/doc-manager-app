@@ -19,4 +19,5 @@ __pycache__/
 # 大きなデータ（例）
 data/*.zip
 data/raw/*
+data/
 
