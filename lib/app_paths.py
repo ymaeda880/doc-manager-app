@@ -1,7 +1,8 @@
 # app_paths.py
 # =================================
 # docs_manager_app 用 Path マネージャ
-# - 設定: config/settings.toml
+# - 設定: config/settings.toml / .streamlit/settings.toml
+# - location の決定順: secrets.toml > APP_LOCATION_PRESET > settings.toml
 # - 環境: Develop / Home / Prec / Server
 # ---------------------------------
 
@@ -14,7 +15,7 @@ import os
 try:
     import streamlit as st  # noqa: F401
 except Exception:
-    st = None
+    st = None  # type: ignore
 
 # --- toml loader (3.11+: tomllib / fallback: tomli) ---
 try:  # Python 3.11+
@@ -113,6 +114,32 @@ def _resolve(spec: Optional[str], *, mounts: Dict[str, Any], default: Path) -> P
         p = (APP_ROOT / p)
     return p.resolve()
 
+def _read_location_from_secrets() -> Optional[str]:
+    """
+    .streamlit/secrets.toml の [env].location（最優先）を安全に取得。
+    - Streamlit が無い/未起動でも例外にしない。
+    - 互換として top-level 'location' も見る（非推奨）。
+    """
+    try:
+        import streamlit as _st  # 遅延インポート
+        env_sec = {}
+        try:
+            env_sec = dict(_st.secrets.get("env", {}))  # type: ignore[arg-type]
+        except Exception:
+            env_sec = {}
+        loc = env_sec.get("location")
+        if isinstance(loc, str) and loc.strip():
+            return loc.strip()
+        try:
+            top_loc = _st.secrets.get("location", None)  # type: ignore[attr-defined]
+            if isinstance(top_loc, str) and top_loc.strip():
+                return top_loc.strip()
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return None
+
 # ================= 本体クラス =================
 
 class AppPaths:
@@ -137,8 +164,13 @@ class AppPaths:
         locs_sec  = dict(self.settings.get("locations", {}))
         app_sec   = dict(self.settings.get("app", {}))
 
-        # 現在のロケーション（デフォルト "Home"）
-        self.env: str = str(env_sec.get("location") or "Home")
+        # === location の決定（優先順: secrets > 環境変数 > settings.toml > 既定 "Home"） ===
+        self.env: str = str(
+            _read_location_from_secrets()
+            or os.getenv("APP_LOCATION_PRESET")
+            or env_sec.get("location")
+            or "Home"
+        )
 
         # プリセット一覧（省略可）
         aps = app_sec.get("available_presets")
