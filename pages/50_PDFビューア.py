@@ -61,6 +61,7 @@ st.markdown(
 )
 
 st.title("📄 PDF ビューア（organized/report/pdf から階層選択）")
+st.info("使用ルート：organized_docs_root")
 
 # ========== ルート ==========
 default_pdf_root = (Path(str(PATHS.organized_docs_root)).expanduser().resolve() / "report" / "pdf")
@@ -135,9 +136,11 @@ if "pdf_selected" not in st.session_state:
     st.session_state.pdf_selected = None
 
 # ============================================================
-# ① 上位フォルダ（全幅）
+# 上位フォルダ（全幅）
 # ============================================================
-st.subheader("① 上位フォルダ選択（organized/report/pdf 下）")
+st.subheader("上位フォルダ選択（organized/report/pdf 下）")
+
+
 st.caption("第1階層のフォルダ（例: 年）をチェック選択します。選ばれたフォルダの直下が次の②で展開されます。")
 
 top_folders = list_dirs(pdf_root)
@@ -155,20 +158,60 @@ for i, d in enumerate(top_folders):
 st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ============================================================
-# ② サブフォルダ（全幅）
+# ①-追加集計：上位フォルダ配下のサブフォルダを1行集計表示（全幅）
+#   - *_ocr.pdf は「生成物」として総数から除外し、別カウントで表示
+#   - <basename>_skip.pdf は (3) “スキップ指定” として別カウント
+#   - sidecar (<basename>_side.json) の ocr ステータス別に (a)〜(g) を集計
+#   - (b) unprocessed が1つでもあれば ❌ を表示
+#   - (a)〜(g) + (3) の合計 と、フォルダ内PDF総数（*_ocr 除く）が異なれば ⚠️ を表示
+#   - 行頭チェックで st.session_state.sel_mid に追加（後段の②と同じ集合を使える）
 # ============================================================
-st.subheader("② サブフォルダ選択（選んだ上位フォルダの直下）")
-st.caption(
-    "各サブフォルダのPDF内訳（🖼 画像 / 🔤 テキスト / ✨ OCR後の画像PDF[*_ocr.pdf] / ⏭ スキップ[*_skip.pdf] と、"
-    "原本画像PDFに対する *_ocr.pdf の充足状況を表示します。"
-    "すべて揃っていれば ✅、不足があれば ❌。🔒 はパスワード保護で判定対象外。"
-)
-st.markdown(
-    "OCR実行機能はこのページでは無効化されています（③セクション削除済み）。",
-    unsafe_allow_html=True
-)
+# ============================================================
+# ①-追加集計（アイコン版）：サブフォルダ別の内訳（全幅1行・チェック付き）
+# ============================================================
+st.subheader("①-集計：サブフォルダ別の内訳（全幅1行・チェック付き）")
 
-SUB_COLS = 3
+# ---- 凡例（最初に表示）----
+st.markdown("""
+**凡例（sidecar `_side.json` の `ocr` 状態）**
+
+- 📄 : sidecar なし（テキストPDF扱い） *(a)*
+- ⏳ : unprocessed（OCR未処理） *(b)*
+- ✅ : done（OCR正常処理済） *(c)*
+- 🔤 : text（見た目は画像PDFだが中身を確認してテキストと判断） *(d)*
+- ⏭ : skipped（処理対象外として明示） *(e)*
+- 🔒 : locked（パスワード保護） *(f)*
+- ❌ : failed（OCR失敗） *(g)*
+- 🚫 : `<basename>_skip.pdf`（ファイル名でスキップ指定） *(3)*
+- ✨ : `*_ocr.pdf`（OCR生成物：**総数から除外**し、別カウント）
+""")
+
+ICONS = {
+    "a": "📄",  # sidecarなし（テキスト扱い）
+    "b": "⏳",  # unprocessed
+    "c": "✅",  # done
+    "d": "🔤",  # text
+    "e": "⏭",  # skipped
+    "f": "🔒",  # locked
+    "g": "❌",  # failed
+    "_skip": "🚫",  # <basename>_skip.pdf
+    "_ocr": "✨",   # *_ocr.pdf（生成物）
+}
+
+st.caption("各サブフォルダのPDFを sidecar（_side.json）の ocr ステータスで集計します。*_ocr.pdf は除外カウント。`<basename>_skip.pdf` は (3) として別計上。")
+
+def sidecar_path_for(pdf: Path) -> Path:
+    return pdf.with_name(pdf.stem + "_side.json")
+
+def load_sidecar_ocr(path: Path) -> Optional[str]:
+    try:
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        v = d.get("ocr")
+        return str(v) if v is not None else None
+    except Exception:
+        return None
 
 for tname in sorted(st.session_state.sel_top):
     tdir = pdf_root / tname
@@ -178,98 +221,116 @@ for tname in sorted(st.session_state.sel_top):
 
     st.markdown(f"**/{tname}**")
 
-    cols_mid = st.columns(SUB_COLS)
-    for j, sd in enumerate(subdirs):
-        key = f"mid_{tname}/{sd.name}"
-
+    for sd in subdirs:
         pdfs = list_pdfs(sd)
-        total = len(pdfs)
 
-        img_cnt = 0
-        ocr_img_cnt = 0
-        txt_cnt = 0
-        skip_cnt = 0
-        img_total = 0          # OCR 対象となりうる原本画像PDFの総数（skip/locked除外）
-        img_ocr_ok = 0         # そのうち _ocr が存在する数
-        img_missing = 0        # そのうち _ocr が未作成の数
-        locked_img = 0
+        # カウンタ初期化
+        a_no_side_text   = 0  # (a)
+        b_unprocessed    = 0  # (b)
+        c_done           = 0  # (c)
+        d_text           = 0  # (d)
+        e_skipped        = 0  # (e)
+        f_locked         = 0  # (f)
+        g_failed         = 0  # (g)
+        skip_files       = 0  # (3) <basename>_skip.pdf
+        ocr_generated    = 0  # *_ocr.pdf（生成物：合計から除外）
+        any_unprocessed  = False
 
         for p in pdfs:
-            if is_skip_name(p):
-                skip_cnt += 1
-                # ⏭ skip は集計には出すが、OCR充足判定の母数からは除外
+            if is_ocr_name(p):              # ✨ 生成物 → 総数から除外
+                ocr_generated += 1
+                continue
+            if is_skip_name(p):             # 🚫 ファイル名スキップ
+                skip_files += 1
                 continue
 
-            is_ocr = is_ocr_name(p)
-            try:
-                info = quick_pdf_info(str(p), p.stat().st_mtime_ns)
-                k = info.get("kind")
-            except Exception:
-                continue
-
-            if not is_ocr and k == "画像PDF" and is_pdf_locked(p):
-                locked_img += 1
-                continue
-
-            if k == "画像PDF":
-                if is_ocr:
-                    ocr_img_cnt += 1
-                    continue
+            sc = sidecar_path_for(p)
+            if sc.exists():
+                status = load_sidecar_ocr(sc)
+                if status == "unprocessed":
+                    b_unprocessed += 1
+                    any_unprocessed = True
+                elif status == "done":
+                    c_done += 1
+                elif status == "text":
+                    d_text += 1
+                elif status == "skipped":
+                    e_skipped += 1
+                elif status == "locked":
+                    f_locked += 1
+                elif status == "failed":
+                    g_failed += 1
                 else:
-                    img_cnt += 1
-                    # OCR 充足率の対象（🔒 / ⏭ を除外）
-                    if not is_pdf_locked(p):
-                        img_total += 1
-                        dst = dest_ocr_path(p)
-                        if dst.exists():
-                            img_ocr_ok += 1
-                        else:
-                            img_missing += 1
+                    # 未知値は未分類（整合性チェックで検知）
+                    pass
+            else:
+                a_no_side_text += 1
 
-            elif k == "テキストPDF":
-                txt_cnt += 1
+        # 合計整合性チェック（✨*_ocr を除く）
+        base_total = max(0, len(pdfs) - ocr_generated)
+        bucket_sum = (a_no_side_text + b_unprocessed + c_done +
+                      d_text + e_skipped + f_locked + g_failed +
+                      skip_files)
 
-        if img_total > 0:
-            mark = "✅" if img_missing == 0 else "❌"
-            ocr_tip = f"{mark} OCR: {img_ocr_ok}/{img_total}"
+        suffix = []
+        if bucket_sum != base_total:
+            suffix.append("⚠️内訳不一致")
+        if any_unprocessed:
+            suffix.append("❌unprocessedあり")
+
+        status_tail = f"｜{ICONS['_ocr']}*_ocr: {ocr_generated}"
+        if suffix:
+            status_tail += " ｜ " + "・".join(suffix)
         else:
-            ocr_tip = "— OCR対象なし"
-        if locked_img > 0:
-            ocr_tip += f"（🔒 {locked_img}）"
+            status_tail += " ｜ ✅集計OK"
 
-        # 1行目と2行目の描画（空白行を詰めて整列）
-        first_line = f"{sd.name}：{total}（🖼 {img_cnt} / 🔤 {txt_cnt} / ✨ {ocr_img_cnt} / ⏭ {skip_cnt}）"
-        second_line = ocr_tip + (" ⚠️画像のみ" if (txt_cnt == 0 and (img_cnt + ocr_img_cnt) > 0) else "")
+        # 1行ラベル（全幅・チェック付き）
+        # 各サブフォルダ行の数字部分フォーマットを3桁ゼロ埋めで整形
+        def fmt3(n: int) -> str:
+            """数字を3桁ゼロ埋めで表示（例: 7→007, 80→080, 116→116）"""
+            return f"{n:03d}"
 
-        cell = cols_mid[j % SUB_COLS]
-        checked = cell.checkbox(first_line, key=key)
-
-        # ←ここ重要：margin-top と margin-bottom を 0 にして行間を完全に詰める
-        cell.markdown(
-            f"""
-            <div class='mono' style='margin-left:1.8rem; margin-top:-0.3rem; margin-bottom:0; line-height:1.1; color:#555;'>
-            {second_line}
-            </div>
-            """,
-            unsafe_allow_html=True,
+        label = (
+            f"{sd.name}｜合計（✨除く）: {fmt3(base_total)}｜"
+            f"{ICONS['a']} {fmt3(a_no_side_text)} / "
+            f"{ICONS['b']} {fmt3(b_unprocessed)} / "
+            f"{ICONS['c']} {fmt3(c_done)} / "
+            f"{ICONS['d']} {fmt3(d_text)} / "
+            f"{ICONS['e']} {fmt3(e_skipped)} / "
+            f"{ICONS['f']} {fmt3(f_locked)} / "
+            f"{ICONS['g']} {fmt3(g_failed)} / "
+            f"{ICONS['_skip']} {fmt3(skip_files)} "
+            f"{status_tail}"
         )
 
+
+        checked = st.checkbox(label, key=f"midagg_{tname}/{sd.name}", value=False)
         if checked:
             st.session_state.sel_mid.add(f"{tname}/{sd.name}")
         else:
             st.session_state.sel_mid.discard(f"{tname}/{sd.name}")
 
+# ①-集計の直後に追加：選択の整合性を整える & 仕切り線
+#  - sel_top に含まれない年配下の sel_mid を除去
+#  - 実在しないサブフォルダの sel_mid を除去
+valid_mids = set()
+for tname in sorted(st.session_state.sel_top):
+    tdir = pdf_root / tname
+    if not tdir.exists():
+        continue
+    for sd in list_dirs(tdir):
+        valid_mids.add(f"{tname}/{sd.name}")
+
+st.session_state.sel_mid = {m for m in st.session_state.sel_mid if m in valid_mids}
+
 st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ============================================================
-# （③ OCR 一括実行 セクションは削除済み）
+# ② PDFファイル選択
 # ============================================================
+st.subheader("② PDFファイル選択（①で選択したサブフォルダ直下）")
+st.caption("①でチェックしたサブフォルダ直下のPDFを列挙します。🔒（パスワード保護）は選択不可として警告表示します。")
 
-# ============================================================
-# ④ PDFファイル選択
-# ============================================================
-st.subheader("④ PDFファイル選択（選んだサブフォルダ直下）")
-st.caption("②で選択したサブフォルダ直下のPDFを列挙します。🔒（パスワード保護）は選択不可として警告表示します。")
 
 cols_pdf = st.columns(3)
 k = 0
@@ -323,10 +384,11 @@ for mid in sorted(st.session_state.sel_mid):
         k += 1
 
 # ============================================================
-# ⑤ サムネイル
+# ③ サムネイル
 # ============================================================
-st.subheader("⑤ サムネイル（選択PDF）")
-st.caption("④で選択したPDFをグリッド表示します。各カードの『👁 開く』で下部ビューアに切り替わります。")
+st.subheader("③ サムネイル（選択PDF）")
+st.caption("②で選択したPDFをグリッド表示します。各カードの『👁 開く』で下部ビューアに切り替わります。")
+
 
 selected_pdf_paths = [Path(s) for s in sorted(st.session_state.sel_pdf)]
 if not selected_pdf_paths:

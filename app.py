@@ -104,19 +104,22 @@ st.caption(
 # ===============================
 st.subheader("📂 現在のパス設定")
 st.text(f"Location (env.location): {PATHS.env}")
-st.text(f"APP_ROOT        : {APP_ROOT}")
-st.text(f"PDF Root        : {PATHS.pdf_root}")
-st.text(f"Converted Root  : {PATHS.converted_root}")
-st.text(f"Text Root       : {PATHS.text_root}")
+st.text(f"APP_ROOT        : {APP_ROOT}（アプリフォルダーへのパス）")
+# st.text(f"PDF Root        : {PATHS.pdf_root}")
+# st.text(f"Converted Root  : {PATHS.converted_root}")
+# st.text(f"Text Root       : {PATHS.text_root}")
 st.text(f"Library Root    : {PATHS.library_root}")
+
+st.text(f"original_docs_root    : {PATHS.original_docs_root}(原本データへのパス)")
+st.text(f"organized_docs_root    : {PATHS.organized_docs_root}（整理したpdfファイルへのパス）")
 
 # ===============================
 # ナビゲーション
 # ===============================
 with st.sidebar:
     st.header("ナビゲーション")
-    st.page_link("pages/80_（旧）PDFビューア.py", label="📄 PDF ビューアを開く")
-    st.page_link("pages/82_（旧）PDFテキストビューア.py", label="📄 PDF テキストビューアを開く")
+    st.page_link("pages/50_PDFビューア.py", label="📄 PDF ビューアを開く")
+    st.page_link("pages/40_OCR処理.py", label="📄 OCR処理を開く")
 
 # ------------------------------------------------------------
 # 起動直後に自動で PDF ビューアページへ遷移（オプション）

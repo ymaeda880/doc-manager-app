@@ -55,7 +55,30 @@ except Exception:
 
 # ========== ページ設定 ==========
 st.set_page_config(page_title="report 整理", page_icon="📂", layout="wide")
+
 st.title("📂 report 整理 — original_docs_root/report 配下の一覧")
+
+st.info("使用ルート：original_docs_root -> organized_docs_root")
+
+st.markdown("""
+### ② フォルダ名を規則で「年 / プロジェクト番号」に分類
+- 7桁数値: `YYYYPPP`（YYYY=年, PPP=プロジェクト番号）  
+- `HNNPPP`: 平成 → 西暦は `1988 + NN`  
+- `SNNPPP`: 昭和 → 西暦は `1925 + NN`  
+- `P...`   : 図書館管理（年=9999, PNo=999）として一旦プレースホルダ  
+- 上記以外は `other` として年なし  
+- ★ 年ごとのエキスパンダーにチェックボックスを付与。  
+  ここでチェックした **年** を ④ の対象年として利用します。
+
+---
+
+### ④ ②で選択した年 → `<ベース>/report/pdf/<年>/<pno>/` へ PDF コピー
+- ②でチェックした「年」だけを対象  
+- 対象ソース: その年の **7桁数値フォルダ（YYYYPPP）**  
+- コピー先: `<ベース>/report/pdf/<年>/<pno>/`  
+  （例: `ExtremeSSD/report/pdf/2020/123/`）  
+- 既存同名ファイルはスキップ
+""")
 
 # ========== 起点 ==========
 ROOT_BASE = Path(str(PATHS.original_docs_root)).expanduser().resolve()

@@ -23,6 +23,7 @@ from lib.pdf.info import quick_pdf_info
 # ========== ページ設定 ==========
 st.set_page_config(page_title="60_skip_json作成", page_icon="🚫", layout="wide")
 st.title("🚫 skip JSON（_side.json, ocr:'skipped'）作成")
+st.info("使用ルート：organized_docs_root")
 
 st.caption(
     "PDFをドロップすると、organized/report/pdf を起点に**同名のPDF**を検索し、"

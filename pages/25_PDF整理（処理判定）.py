@@ -38,6 +38,8 @@ except Exception:
 st.set_page_config(page_title="PDF整理（画像PDFに sidecar 付与）", page_icon="🧩", layout="wide")
 st.title("🧩 PDF整理 — 画像PDFに sidecar JSON を付与")
 
+st.info("使用ルート：organized_docs_root")
+
 st.markdown(
     """
     <style>
@@ -244,6 +246,7 @@ JSON の構造は次のとおりです．
   "ocr": "unprocessed"
 }             
 ここで，"ocr": "unprocessed"は未処理という意味です．
+未処理の画像pdfファイルに対しては，[OCR処理]タブで，ocrを行って，対応するテキストpdfを作成します．
 ``` 
 ```json
 ③では，画像pdfと判定されているがテキストpdfである可能性があるファイルの調査し，テキストpdfであることがわかった場合には，

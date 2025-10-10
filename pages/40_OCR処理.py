@@ -187,6 +187,8 @@ st.markdown(
 
 st.title("📄 OCR処理（organized/report/pdf から階層選択）")
 
+st.info("使用ルート：organized_docs_root")
+
 # ========== ルート ==========
 default_pdf_root = (Path(str(PATHS.organized_docs_root)).expanduser().resolve() / "report" / "pdf")
 with st.sidebar:
