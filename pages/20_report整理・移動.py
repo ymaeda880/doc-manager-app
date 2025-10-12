@@ -52,6 +52,17 @@ try:
 except Exception:
     quick_pdf_info = None
 
+import sys
+from pathlib import Path
+
+# projects/ を import パスに追加（pages → app → project → projects）
+PROJECTS_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECTS_ROOT))
+
+# これで common_lib をパッケージとして参照できる
+from common_lib.ui.ui_basics import thick_divider
+
 
 # ========== ページ設定 ==========
 st.set_page_config(page_title="report 整理", page_icon="📂", layout="wide")
@@ -59,6 +70,8 @@ st.set_page_config(page_title="report 整理", page_icon="📂", layout="wide")
 st.title("📂 report 整理 — original_docs_root/report 配下の一覧")
 
 st.info("使用ルート：original_docs_root -> organized_docs_root")
+
+
 
 # ★ ここにフルパスを追加
 try:
@@ -73,6 +86,8 @@ try:
     )
 except Exception as e:
     st.warning(f"ルートパスの取得に失敗しました: {e}")
+
+thick_divider(color="Blue", height=3, margin="1.5em 0")
 
 st.markdown("""
 ### ② フォルダ名を規則で「年 / プロジェクト番号」に分類
@@ -144,8 +159,13 @@ def _parse_folder_name(name: str) -> Dict[str, Any]:
     return {"name": name, "category": "other", "year": None, "pno": None}
 
 
+thick_divider(color="Blue", height=3, margin="1.5em 0")
+
 # ========== ① 深さ1のフォルダ一覧 ==========
 st.subheader("① 深さ1のフォルダ一覧（report 直下）")
+st.info(f"""
+（原本ファイル）original_docs_root: `{org_root}`  
+""")
 st.markdown(
     """
     📌 **説明**  
