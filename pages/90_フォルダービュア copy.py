@@ -1,10 +1,7 @@
 """
 pages/10_フォルダービュア.py
 ============================================
-📂 Folder Viewer — ラジオ→ボタングリッド→次階層プレビュー（1→2→3→4階層）
-- 深さ1: ラジオ（単一選択）※従来どおり
-- 深さ2/3: ✅トグル式のボタングリッド（4列）
-- 深さ4: DataFrame表示＋CSV保存
+📂 Folder Viewer — ラジオ→チェック→次階層プレビュー（1→2→3→4階層）
 """
 
 from __future__ import annotations
@@ -17,6 +14,40 @@ import streamlit as st
 # パス設定
 from lib.app_paths import PATHS
 from lib.fsnav.scan import safe_stat_mtime, listdir_counts, iter_dirs
+
+# ============================================================
+# ユーティリティ: 複数選択ボタン（グリッド形式）
+# ============================================================
+def multiselect_button_grid(
+    options: List[str],
+    *,
+    selected: Set[str],
+    state_prefix: str,
+    cols: int = 4,
+    mark_selected: bool = True,
+) -> Set[str]:
+    """
+    チェックボックス代替：ボタンをグリッド状に並べて複数選択
+    - options: 表示する文字列リスト
+    - selected: 現在選択済みの set（直接更新される）
+    - state_prefix: ボタンの key に使う接頭辞
+    - cols: 列数
+    - mark_selected: True のとき選択中を ✅ 表示
+    """
+    for i in range(0, len(options), cols):
+        row = options[i:i+cols]
+        cols_ui = st.columns(len(row))
+        for j, opt in enumerate(row):
+            is_selected = opt in selected
+            label = f"✅ {Path(opt).name}" if (mark_selected and is_selected) else Path(opt).name
+            if cols_ui[j].button(label, key=f"{state_prefix}__{opt}"):
+                # トグル動作
+                if is_selected:
+                    selected.discard(opt)
+                else:
+                    selected.add(opt)
+    return selected
+
 
 # ------------------------------------------------------------
 # ページ設定
@@ -59,11 +90,6 @@ with st.sidebar:
     st.caption(f"実パス: `{ROOT}`")
     compute_counts = st.checkbox("直下件数を計算", value=False)
 
-    # ▼ 追加：グリッド列数（＝1行あたりのボタン数）を可変に
-    st.subheader("グリッド列数（1行のボタン数）")
-    grid_cols_l2 = st.slider("深さ2の列数", min_value=1, max_value=12, value=8, step=1)
-    grid_cols_l3 = st.slider("深さ3の列数", min_value=1, max_value=10, value=4, step=1)
-
 # ------------------------------------------------------------
 # ユーティリティ
 # ------------------------------------------------------------
@@ -94,40 +120,6 @@ def make_rows_for_dirs(paths: List[Path], parent_rel: str) -> pd.DataFrame:
     return df
 
 # ------------------------------------------------------------
-# ✅ 追加ユーティリティ：複数選択ボタングリッド
-# ------------------------------------------------------------
-def multiselect_button_grid(
-    options: List[str],
-    *,
-    selected: Set[str],
-    state_prefix: str,
-    cols: int = 4,
-    mark_selected: bool = True,
-) -> Set[str]:
-    """
-    チェックボックス代替：ボタンをグリッド状に並べて複数選択トグル
-    - options: 表示する選択肢（str）
-    - selected: 現在選択済み（set）。本関数内で直接更新される
-    - state_prefix: st.button の key 接頭辞（安定化用）
-    - cols: 列数（デフォルト4列）
-    - mark_selected: True なら選択中に ✅ を付ける
-    """
-    for i in range(0, len(options), cols):
-        row = options[i:i + cols]
-        cols_ui = st.columns(len(row))
-        for j, opt in enumerate(row):
-            is_selected = opt in selected
-            # ラベルは最後のパス要素を見やすく表示（name中心）しつつ、選択時は✅
-            label_text = Path(opt).name
-            label = f"✅ {label_text}" if (mark_selected and is_selected) else label_text
-            if cols_ui[j].button(label, key=f"{state_prefix}__{opt}"):
-                if is_selected:
-                    selected.discard(opt)
-                else:
-                    selected.add(opt)
-    return selected
-
-# ------------------------------------------------------------
 # セッション状態（選択の保持）
 # ------------------------------------------------------------
 # 深さ2の選択（set[str] / ROOT からの相対パス）
@@ -141,7 +133,7 @@ CHECKED_L2: Set[str] = st.session_state["fv_checked_l2"]
 CHECKED_L3: Dict[str, Set[str]] = st.session_state["fv_checked_l3"]
 
 # ------------------------------------------------------------
-# メイン機能：ラジオ→（深さ2/3はボタングリッド）→深さ4プレビュー
+# メイン機能：ラジオ→チェック→次階層プレビュー（1→2→3→4階層）
 # ------------------------------------------------------------
 # 深さ1のフォルダを取得（表は出さず、ラジオのみ）
 level1_paths: List[Path] = list(iter_dirs(ROOT, max_depth=1, ignore_hidden=True))
@@ -177,26 +169,24 @@ else:
             with c_cnt:
                 st.caption(f"選択数: {len(CHECKED_L2)} / {len(lvl2_dirs):,}")
 
-            # ✅ 深さ2：チェックボックス → ボタングリッド（4列）へ変更
-            rel2_list = [str(d.relative_to(ROOT)) for d in lvl2_dirs]
-            CHECKED_L2 = multiselect_button_grid(
-                rel2_list,
-                selected=CHECKED_L2,
-                state_prefix="btn_l2",
-                cols=grid_cols_l2,
-            )
-
-            # 深さ2の選択に連動して、外れたものの深さ3選択は安全に削除
-            for k in list(CHECKED_L3.keys()):
-                if k not in CHECKED_L2:
-                    CHECKED_L3.pop(k, None)
+            # チェックボックス群（深さ2）
+            selected_lvl2_labels: List[str] = []
+            for d in lvl2_dirs:
+                rel2 = str(d.relative_to(ROOT))
+                chk = st.checkbox(rel2, value=(rel2 in CHECKED_L2), key=f"chk_l2_{rel2}")
+                if chk:
+                    CHECKED_L2.add(rel2)
+                    selected_lvl2_labels.append(rel2)
+                else:
+                    CHECKED_L2.discard(rel2)
+                    # 連動して、深さ3の選択も消しておく（安全）
+                    CHECKED_L3.pop(rel2, None)
 
         st.divider()
 
-        # 深さ3（深さ2で選択された各フォルダの直下）— 折りたたみ＋ボタングリッド → 深さ4表示
-        selected_lvl2_labels: List[str] = sorted(CHECKED_L2)
+        # 深さ3（チェック付きの各 深さ2 の直下）— それぞれ折りたたみ＋チェック → 深さ4表示
         if not selected_lvl2_labels:
-            st.info("深さ2のフォルダが選択されていません。ボタンで選択してください。")
+            st.info("深さ2のフォルダが選択されていません。チェックを付けてください。")
         else:
             st.markdown("### 深さ3 / 深さ4")
             for rel2 in selected_lvl2_labels:
@@ -218,19 +208,19 @@ else:
                     with c3_cnt:
                         st.caption(f"選択数: {len(selected_set_for_l2)} / {len(d3_subs)}")
 
-                    # ✅ 深さ3：チェックボックス → ボタングリッド（4列）へ変更
-                    rel3_list = [str(p.relative_to(ROOT)) for p in d3_subs]
-                    CHECKED_L3[rel2] = multiselect_button_grid(
-                        rel3_list,
-                        selected=selected_set_for_l2,
-                        state_prefix=f"btn_l3_{rel2}",
-                        cols=grid_cols_l3, 
-                    )
+                    # 深さ3チェックボックス群
+                    for p3 in d3_subs:
+                        rel3 = str(p3.relative_to(ROOT))
+                        chk3 = st.checkbox(rel3, value=(rel3 in selected_set_for_l2), key=f"chk_l3_{rel3}")
+                        if chk3:
+                            selected_set_for_l2.add(rel3)
+                        else:
+                            selected_set_for_l2.discard(rel3)
 
                     # === 深さ4（深さ3でチェックされたフォルダ 直下） ===
-                    if CHECKED_L3[rel2]:
+                    if selected_set_for_l2:
                         st.markdown("**深さ4（チェックした深さ3 直下のフォルダ）**")
-                        for rel3 in sorted(CHECKED_L3[rel2]):
+                        for rel3 in sorted(selected_set_for_l2):
                             d3 = ROOT / rel3
                             d4_subs = list_subdirs_once_unfiltered(d3)
                             with st.expander(f"└─ {rel3} — 深さ4: {len(d4_subs)} 件", expanded=False):
@@ -247,4 +237,4 @@ else:
                                         key=f"dl_depth4__{rel3}",
                                     )
 
-st.caption("※ 表示はすべて“直下のサブフォルダのみ”（フィルタ無効）。深さ2/3はボタンで✅トグルしながら段階的に掘り下げます。")
+st.caption("※ 表示はすべて“直下のサブフォルダのみ”（フィルタ無効）。深さ2/3はチェックで段階的に掘り下げます。")

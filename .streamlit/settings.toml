@@ -3,7 +3,7 @@
 
 [env]
 # 使用する環境（Develop / Home / Prec / Server から選択）
-# location = "Home"
+# location は secrets.toml 内で設定
 
 # ---- マウント定義 ----
 [mounts]
