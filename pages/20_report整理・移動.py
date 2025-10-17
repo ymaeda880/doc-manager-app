@@ -63,9 +63,14 @@ if str(PROJECTS_ROOT) not in sys.path:
 # これで common_lib をパッケージとして参照できる
 from common_lib.ui.ui_basics import thick_divider
 
+# import _bootstrap_path
+# from common_lib.ui.ui_basics import thick_divider
+
 
 # ========== ページ設定 ==========
 st.set_page_config(page_title="report 整理", page_icon="📂", layout="wide")
+
+
 
 st.title("📂 report 整理 — original_docs_root/report 配下の一覧")
 
@@ -86,6 +91,18 @@ try:
     )
 except Exception as e:
     st.warning(f"ルートパスの取得に失敗しました: {e}")
+
+st.markdown(
+    """
+    <span style="color:steelblue;">
+    元本ファイル（original_docs）を作業ファイル（organized_docs）に整理してコピーします。<br>    
+    作業ファイルには、PDFファイルのみを、年とプロジェクト番号ごとにフォルダーを作って格納します。
+    </span>
+    """,
+    unsafe_allow_html=True
+)
+
+
 
 thick_divider(color="Blue", height=3, margin="1.5em 0")
 
