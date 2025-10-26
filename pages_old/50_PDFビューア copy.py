@@ -44,151 +44,23 @@ except Exception:
 
 # ---------- ちょいCSS ----------
 st.set_page_config(page_title="PDF ビューア", page_icon="📄", layout="wide")
-# st.markdown(
-#     """
-#     <style>
-#       .block-container {padding-top: 1rem; padding-bottom: 2rem; max-width: 1300px;}
-#       h1, h2, h3 {margin: 0.2rem 0 0.6rem 0;}
-#       .stCheckbox > label, label {line-height: 1.2;}
-#       .stMarkdown p {margin: 0.2rem 0;}
-#       .tight {margin-top: 0.25rem; margin-bottom: 0.25rem;}
-#       .divider {margin: .6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;}
-#       .muted {color:#6b7280;}
-#       .mono {font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;}
-#     </style>
-#     """,
-#     unsafe_allow_html=True,
-# )
+st.markdown(
+    """
+    <style>
+      .block-container {padding-top: 1rem; padding-bottom: 2rem; max-width: 1300px;}
+      h1, h2, h3 {margin: 0.2rem 0 0.6rem 0;}
+      .stCheckbox > label, label {line-height: 1.2;}
+      .stMarkdown p {margin: 0.2rem 0;}
+      .tight {margin-top: 0.25rem; margin-bottom: 0.25rem;}
+      .divider {margin: .6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;}
+      .muted {color:#6b7280;}
+      .mono {font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.title("📄 PDF ビューア（organized/report/pdf から階層選択）")
-
-with st.expander("ℹ️ このページの役割と処理フロー（PDFビューア：OCR実行なし）", expanded=False):
-    st.markdown(r"""
-## 目的（What）
-**organized_docs_root/report/pdf** 配下を階層選択し、  
-- 各サブフォルダの **PDF内訳（sidecarの`ocr`状態や *_skip / *_ocr）を集計表示**  
-- 任意のPDFを選んで **サムネイル一覧 → 個別プレビュー（st.pdf / pdf.js / プラグイン）**  
-- さらに **画像埋め込みの集計/抽出** と **OCRなしテキスト抽出（get_text）** を確認  
-するための **閲覧・点検専用ページ** です（※OCRは実行しません）。
-
----
-
-## 全体の流れ（UIセクション）
-1. **上位フォルダ選択**（年などの第1階層）  
-2. **①-集計**：選択した上位フォルダ配下の**サブフォルダごとの内訳**（1行）を一覧  
-3. **② PDFファイル選択**：①でチェックしたサブフォルダ直下のPDFを複数選択  
-4. **③ サムネイル**：選択PDFをグリッド表示（「👁 開く」で下部ビューアへ）  
-5. **👁 ビューア**：個別PDFを表示＋解析（画像埋め込み / get_text）
-
-> **注意**：本ページは**OCRの実行を削除**しています。`*_ocr.pdf` はあくまで**既存の生成物として表示**・集計されます。
-
----
-
-## 重要な用語・判定規則
-- **`*_ocr.pdf`**：OCR済みの**生成物**。一覧の「✨」にカウント。**フォルダ合計（ベース総数）からは除外**。  
-- **`*_skip.pdf`**：ファイル名でスキップ指定。一覧の「🚫」にカウント。  
-- **sidecar（`<basename>_side.json`）**：OCR状態を管理する隣接JSON（別ページで作成/更新）。  
-  - `ocr` 値の集計記号：  
-    - 📄 *a*：sidecarなし（＝テキスト扱いカウント）  
-    - ⏳ *b*：unprocessed  
-    - ✅ *c*：done  
-    - 🔤 *d*：text（見た目画像でも実質テキストPDFと判定）  
-    - ⏭ *e*：skipped（処理対象外）  
-    - 🔒 *f*：locked（パスワード保護）  
-    - ❌ *g*：failed（OCR失敗）  
-
----
-
-## ①-集計：サブフォルダ1行サマリーの作り方
-各サブフォルダについて `list_pdfs()` でPDFを走査し、次のロジックでカウントします：
-
-1. **最初に除外**  
-   - `is_ocr_name(p)` → `*_ocr.pdf` は **生成物**として `✨ ocr_generated` にカウントし、**以降の合計から除外**。  
-   - `is_skip_name(p)` → `🚫 skip_files` にカウント。
-
-2. **sidecarの`ocr`状態で振り分け**（`<basename>_side.json` を読み込み）：  
-   - `'unprocessed' → ⏳ b_unprocessed（*b*）`（1つでもあれば行末に **「❌unprocessedあり」** を表示）  
-   - `'done' → ✅ c_done（*c*）`  
-   - `'text' → 🔤 d_text（*d*）`  
-   - `'skipped' → ⏭ e_skipped（*e*）`  
-   - `'locked' → 🔒 f_locked（*f*）`  
-   - `'failed' → ❌ g_failed（*g*）`  
-   - **sidecarなし** → 📄 a_no_side_text（*a*）
-
-3. **整合性チェック**  
-   - **ベース総数** = フォルダ内PDF総数 − `*_ocr.pdf`（✨）  
-   - **集計合計** = (a+b+c+d+e+f+g) + 🚫（skip_files）  
-   - 不一致時は **「⚠️内訳不一致」** を付与。  
-   - `b_unprocessed>0` で **「❌unprocessedあり」** を付与。  
-   - 最終ラベルは **ゼロ埋め3桁**で並べた1行（チェック付き）。チェックすると `st.session_state.sel_mid` に登録され、②以降の対象になります。
-
-> ねらい：**サブフォルダごとの状態をひと目で把握**（未処理・失敗・ロック・スキップ・生成物）し、問題フォルダをすばやく選べます。
-
----
-
-## ② PDFファイル選択（サブフォルダ直下）
-- ①でチェックしたサブフォルダ直下のPDFを列挙して**個別選択**。  
-- `quick_pdf_info()` により  
-  - 種別バッジ：`✨ OCR後の画像PDF` / `🔤 テキストPDF` / `🖼 画像PDF` / `⏭ スキップ指定` / `❓ 不明`  
-  - ページ数を表示。  
-- 🔒 `is_pdf_locked(p)==True` は**選択不可＆警告**。内部的に `sel_pdf` から除外します。
-
----
-
-## ③ サムネイル
-- `render_thumb_png()` で各PDFの**サムネイル**を生成して**グリッド表示**（列数・幅はサイドバー設定）。  
-- 各カード下の「👁 開く」で **下部ビューアの対象（`st.session_state.pdf_selected`）に設定**。  
-- バッジとページ数も併記。サムネ生成失敗は警告表示で継続。
-
----
-
-## 👁 ビューア（プレビュー＋解析）
-- 表示方式は  
-  - **Streamlit内蔵（`st.pdf`）**、  
-  - **pdf.js（`streamlit_pdf_viewer`）**、  
-  - **ブラウザPDFプラグイン（base64埋め込み + `#zoom` プリセット）**  
-  を選択可能。寸法・ズームはサイドバーで調整。  
-- **ダウンロード**ボタン付き。
-- 解析（対象PDFに対して）  
-  1) **🖼 画像埋め込み情報**（`analyze_pdf_images`）  
-     - 総走査ページ数 / 画像総数 / 形式分布（上位）を**metric**で表示  
-     - ページ別の**画像枚数・形式**をリスト  
-     - さらに必要なら **埋め込み画像の抽出**（XObjectそのまま / ページ見た目で再サンプリング）  
-       → サムネ列表示＋ **ZIPダウンロード**  
-       → XObject抽出が空なら自動で再サンプリング提案  
-  2) **📝 抽出テキスト（OCRなし）**（`analyze_pdf_texts`）  
-     - PyMuPDFの `get_text` による生テキストをページごとに表示  
-     - **先頭Nページ/全ページ**はサイドバーの「解析範囲」で切替
-
----
-
-## セッション状態（State）
-- `sel_top`：チェックした**上位フォルダ**名の集合  
-- `sel_mid`：チェックした**サブフォルダ**（`"year/sub"` 文字列）の集合  
-- `sel_pdf`：チェックされた**PDFの絶対パス**文字列の集合  
-- `pdf_selected`：現在ビューアで開いている**ルートからの相対パス**  
-> ①-集計の直後に、**不存在・未選択上位配下の `sel_mid` を整備**して整合性を保ちます。
-
----
-
-## 実装メモ / ベストプラクティス
-- **`*_ocr.pdf` は集計から除外**し、別カウント（✨）で表示することで、**原本PDFの状態**を正しく把握。  
-- **`*_skip.pdf` は (3) として別計上**：sidecarの `ocr:"skipped"` とあわせて**二重のスキップ経路**を可視化。  
-- **整合性チェック**（⚠️）で、sidecarの欠損や未知値・配置ゆらぎを早期発見。  
-- 大量表示時は **グリッド列数 / サムネ幅** を絞るとパフォーマンスが安定。  
-- **pdf.js** を使う場合は `streamlit-pdf-viewer` のインストールが必要（導入済みなら自動切替）。
-
----
-
-## まとめ
-このページは **「現状把握と可視化」** に特化：  
-- フォルダ別の **sidecarベース内訳** を一望  
-- 必要なPDFだけ **選択 → サムネ → プレビュー**  
-- **画像/テキストの中身** までその場で確認  
-という点検ワークフローを、**OCR実行のない安全な環境**で回せます。
-    """)
-
-
 st.info("使用ルート：organized_docs_root")
 
 # ========== ルート ==========

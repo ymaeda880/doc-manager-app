@@ -1,4 +1,4 @@
-2025-10-15 12:41:54.333 
+2025-10-25 07:40:05.318 
 Warning: the config option 'server.enableCORS=false' is not compatible with
 'server.enableXsrfProtection=true'.
 As a result, 'server.enableCORS' is being overridden to 'true'.
@@ -15,4 +15,6 @@ If cross origin resource sharing is required, please disable server.enableXsrfPr
 
   URL: http://0.0.0.0:8503/doc_manager
 
+/Users/macmini2025/projects/doc_manager_project/doc_manager_app/.venv/lib/python3.12/site-packages/openpyxl/styles/stylesheet.py:237: UserWarning: Workbook contains no default style, apply openpyxl's default
+  warn("Workbook contains no default style, apply openpyxl's default")
   Stopping...

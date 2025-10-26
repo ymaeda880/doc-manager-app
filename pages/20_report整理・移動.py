@@ -107,7 +107,7 @@ st.markdown(
 thick_divider(color="Blue", height=3, margin="1.5em 0")
 
 st.markdown("""
-### ② フォルダ名を規則で「年 / プロジェクト番号」に分類
+### フォルダ名を規則で「年 / プロジェクト番号」に分類
 - 7桁数値: `YYYYPPP`（YYYY=年, PPP=プロジェクト番号）  
 - `HNNPPP`: 平成 → 西暦は `1988 + NN`  
 - `SNNPPP`: 昭和 → 西暦は `1925 + NN`  
@@ -118,7 +118,7 @@ st.markdown("""
 
 ---
 
-### ④ ②で選択した年 → `<ベース>/report/pdf/<年>/<pno>/` へ PDF コピー
+### 選択した年 → `<ベース>/report/pdf/<年>/<pno>/` へ PDF コピー
 - ②でチェックした「年」だけを対象  
 - 対象ソース: その年の **7桁数値フォルダ（YYYYPPP）**  
 - コピー先: `<ベース>/report/pdf/<年>/<pno>/`  
@@ -219,8 +219,8 @@ else:
 
 st.divider()
 
-# ========== ①.5 年 / プロジェクト早見（拡張子別：件数・総容量、再帰・DataFrame表示） ==========
-st.subheader("①.5 年 / プロジェクト早見（拡張子別：件数・総容量、再帰・DataFrame表示）")
+# ========== ① 年 / プロジェクト一覧（original)（拡張子別：件数・総容量、再帰・DataFrame表示） ==========
+st.subheader("① 年 / プロジェクト一覧（original）（拡張子別：件数・総容量、DataFrame表示）")
 st.markdown(
     """
     📌 **説明**  
@@ -654,6 +654,7 @@ else:
 
 
 
+thick_divider("#007ACC", 4)
 
 # ========== ② フォルダ名 → 年/プロジェクト番号分類 ==========
 st.subheader("② フォルダ名の分類（年 / プロジェクト番号）")

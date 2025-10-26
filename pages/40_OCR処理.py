@@ -169,24 +169,53 @@ def is_skipped_by_name_or_json(p: Path) -> bool:
 
 # ---------- ちょいCSS ----------
 st.set_page_config(page_title="OCR処理", page_icon="📄", layout="wide")
-st.markdown(
-    """
-    <style>
-      .block-container {padding-top: 1rem; padding-bottom: 2rem; max-width: 1300px;}
-      h1, h2, h3 {margin: 0.2rem 0 0.6rem 0;}
-      .stCheckbox > label, label {line-height: 1.2;}
-      .stMarkdown p {margin: 0.2rem 0;}
-      .tight {margin-top: 0.25rem; margin-bottom: 0.25rem;}
-      .divider {margin: .6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;}
-      .muted {color:#6b7280;}
-      .mono {font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# st.markdown(
+#     """
+#     <style>
+#       .block-container {padding-top: 1rem; padding-bottom: 2rem; max-width: 1300px;}
+#       h1, h2, h3 {margin: 0.2rem 0 0.6rem 0;}
+#       .stCheckbox > label, label {line-height: 1.2;}
+#       .stMarkdown p {margin: 0.2rem 0;}
+#       .tight {margin-top: 0.25rem; margin-bottom: 0.25rem;}
+#       .divider {margin: .6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;}
+#       .muted {color:#6b7280;}
+#       .mono {font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;}
+#     </style>
+#     """,
+#     unsafe_allow_html=True,
+# )
 
 st.title("📄 OCR処理（organized/report/pdf から階層選択）")
+with st.expander("ℹ️ このページの役割と処理フロー（OCR処理・sidecar連携の全体像）", expanded=False):
+    st.markdown(r"""
+## 概要（What this page does）
+**organized_docs_root/report/pdf** 配下で **画像PDF（image_pdf）** を対象に、  
+**OCR（OCRmyPDF）** を一括実行し、**sidecar（`<basename>_side.json`）** の `ocr` 状態を更新します。  
+UIは ①上位フォルダ → ②サブフォルダ（`ocr=unprocessed` 起点） → ③OCR実行 → ④選択 → ⑤サムネ → 👁ビューア の流れ。
 
+---
+
+## 使う主なライブラリ / ユーティリティ
+- パス/列挙: `lib.app_paths.PATHS`, `list_dirs()`, `list_pdfs()`, `rel_from()`
+- PDF情報: `quick_pdf_info()`（種別 *テキストPDF/画像PDF* とページ数）
+- 画像分析: `analyze_pdf_images()`, `extract_embedded_images()`
+- テキスト抽出（OCRなし）: `analyze_pdf_texts()`
+- OCR実行: `run_ocr()`（OCRmyPDF ラッパー）
+- ロック判定: `is_pdf_locked()`（🔒パスワード保護）
+- 命名規約: `is_ocr_name()`（`*_ocr.pdf` 判定）, `dest_ocr_path()`（出力先パス）
+- sidecar: `sidecar_path_for()`, `load_sidecar_dict()`, `find_pdf_for_sidecar()`, `update_sidecar_ocr()`
+
+---
+
+## sidecar（`_side.json`）の仕様
+```json
+{
+  "type": "image_pdf",
+  "created_at": "2025-10-07T08:42:00+09:00",
+  "ocr": "unprocessed"  // "done" | "failed" | "skipped" | "locked" | "unprocessed"
+}
+""")
+    
 st.info("使用ルート：organized_docs_root")
 
 # ========== ルート ==========

@@ -23,6 +23,34 @@ from lib.pdf.info import quick_pdf_info
 # ========== ページ設定 ==========
 st.set_page_config(page_title="60_skip_json作成", page_icon="🚫", layout="wide")
 st.title("🚫 skip JSON（_side.json, ocr:'skipped'）作成")
+
+
+with st.expander("ℹ️ このページの役割と処理フロー（skip sidecar作成）", expanded=False):
+    st.markdown(r"""
+## 目的（What）
+**organized_docs_root/report/pdf** を起点に、指定した **PDFと同名の実体ファイル** を探し出し、  
+**`<basename>_side.json`** を作成/更新して `ocr: "skipped"` を付与します。  
+（図面や票など **OCR/ベクトル化の対象外** にしたいPDFを、**安全に・素早く** まとめて除外登録するためのツール）
+
+---
+
+## 主な機能（Features）
+- **ドラッグ&ドロップ**した PDF 名で、`organized/report/pdf` 配下を探索（年→pnoの優先探索＋`rglob`）
+- **同名ヒットが複数**ある場合は、候補を列挙して**ラジオ選択**
+- すべてのドロップファイルが **同一フォルダに存在** と判断できれば、**一括作成** UI を提示
+- 既存の sidecar がある場合は **既定ではスキップ**（サイドバーで **上書きON** にすると更新）
+- 作成/更新した結果は **一覧（成功/スキップ理由）** を表示
+- 参考情報として `quick_pdf_info` による **種別（画像/テキスト）・ページ数・サイズ** を表示
+
+---
+
+## 重要な用語（Naming）
+- **sidecar（_side.json）**：`<basename>_side.json` という隣接JSON  
+  ```json
+  {"type":"image_pdf","created_at":"YYYY-MM-DDTHH:MM:SS+09:00","ocr":"skipped"}
+
+ """)               
+
 st.info("使用ルート：organized_docs_root")
 
 st.caption(
