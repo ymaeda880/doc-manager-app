@@ -201,7 +201,20 @@ def find_common_parent_dirs(hits_map: Dict[str, List[Path]]) -> List[Path]:
 
 # ========== 入力 ==========
 st.subheader("① PDF をドロップ")
-uploads = st.file_uploader("PDFをドラッグ＆ドロップ（複数可）", type=["pdf"], accept_multiple_files=True)
+
+# 🔸 追加：アップローダ用の key カウンタ
+if "skip_pdf_uploader_key" not in st.session_state:
+    st.session_state["skip_pdf_uploader_key"] = 0
+
+uploader_key = f"skip_pdf_uploads_{st.session_state['skip_pdf_uploader_key']}"
+
+uploads = st.file_uploader(
+    "PDFをドラッグ＆ドロップ（複数可）",
+    type=["pdf"],
+    accept_multiple_files=True,
+    key=uploader_key,  # ← 固定値ではなく動的 key
+)
+
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.subheader("②（任意）対象PDFの絶対パスを直接指定")
@@ -319,6 +332,14 @@ if errors:
     st.warning("未処理")
     for e in errors:
         st.text(f"- {e}")
+
+# 🔽 ここから新しいクリア処理
+# 「一括実行ボタン」が押されていて、かつ uploads があったときだけクリア
+if do_run and uploads:
+    # 次の run で使う uploader key をインクリメント
+    st.session_state["skip_pdf_uploader_key"] += 1
+    st.rerun()
+
 
 # ========== 使い方メモ ==========
 with st.expander("ℹ️ 使い方 / 仕様メモ", expanded=False):

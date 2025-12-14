@@ -23,6 +23,8 @@ from collections import defaultdict
 import pandas as pd
 import sys
 
+from lib.ssd_viewer.explanation import render_ssd_viewer_expander
+
 # ------------------------------------------------------------
 # パス設定
 # ------------------------------------------------------------
@@ -53,6 +55,7 @@ except Exception:
 # ヘッダー（パス情報）
 # ------------------------------------------------------------
 st.title("📂 SSDビュアー")
+render_ssd_viewer_expander()
 st.subheader("📂 パス情報")
 
 st.markdown(
@@ -386,10 +389,14 @@ else:
                 original_count = 0
                 if pdir_original:
                     seen = set()
+                    
                     for f in pdir_original.rglob("*"):
                         if f.is_file() and f.suffix.lower() == ".pdf":
+                            # AppleDouble の偽 PDF は除外
+                            if f.name.startswith("._"):
+                                continue
                             name = f.name.lower()
-                            if name in seen: 
+                            if name in seen:
                                 continue
                             seen.add(name)
                             original_count += 1

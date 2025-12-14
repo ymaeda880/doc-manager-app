@@ -46,6 +46,8 @@ import pandas as pd
 from lib.app_paths import PATHS
 from lib.fsnav.scan import iter_dirs, safe_stat_mtime, listdir_counts
 
+from lib.report_organizer.explanation import render_report_organizer_expander
+
 # 任意：PDFの軽量種別（現状未使用でもOK）
 try:
     from lib.pdf.info import quick_pdf_info  # noqa: F401
@@ -75,6 +77,8 @@ st.set_page_config(page_title="report 整理", page_icon="📂", layout="wide")
 st.title("📂 report 整理 — original_docs_root/report 配下の一覧")
 
 st.info("使用ルート：original_docs_root -> organized_docs_root")
+
+render_report_organizer_expander()
 
 
 

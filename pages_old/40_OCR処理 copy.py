@@ -4,19 +4,75 @@
 # - ② は <basename>_side.json の "ocr":"unprocessed" 起点でフォルダを表示
 # - ③ の OCR 成否に応じて <basename>_side.json の "ocr" を "done"/"failed" に更新
 # - ④〜 は既存ビューア機能を踏襲
-#
-# ★ 2025-12: 「ページ進捗（全PDF合算）」を表示するように修正
-#   - 総ページ数 = 対象PDFのページ数合計（quick_pdf_info）
-#   - run_ocr(progress_cb) は CLI 優先で Page x/y を返す
-#   - 右ペインに「現在ファイルのページ」「全体ページ」を表示
 # ------------------------------------------------------------
 
-from __future__ import annotations
+"""
+pages/40_OCR処理.py
+===================
 
+概要
+----
+organized_docs_root/report/pdf 配下の階層から対象フォルダを選び、画像PDFに対して
+OCR（OCRmyPDF）を一括実行する Streamlit ページ。
+
+サイドカー（<basename>_side.json）を起点に以下のワークフローを実装する：
+
+1) ① 上位フォルダ選択
+   - 第1階層（例: 年度等）を複数選択
+
+2) ② サブフォルダ選択（side.json の ocr=unprocessed 起点）
+   - 各サブフォルダ直下の *_side.json を走査し、
+     "type": "image_pdf" かつ "ocr": "unprocessed" を1件以上含むフォルダのみを表示
+
+3) ③ OCR 一括実行
+   - ②で選択した各サブフォルダ内の PDF から、
+     *_skip / *_ocr / 🔒保護PDF / sidecar.ocr=skipped を除外
+   - quick_pdf_info() で「画像PDF」と判定されたものだけを対象
+   - *_ocr.pdf が未作成のファイルを OCR
+   - 成否に応じて sidecar の "ocr" を "done" / "failed" に更新
+   - 🔒保護PDFは "locked" に更新してスキップ
+
+4) ④ PDFファイル選択
+   - ②で選んだサブフォルダ直下のPDFを列挙し、チェックで複数選択
+   - 🔒保護PDFは選択不可として警告
+
+5) ⑤ サムネイル表示 & 👁 ビューア
+   - 選択したPDFのサムネイルをグリッド表示
+   - st.pdf / pdf.js / ブラウザプラグイン でプレビュー
+   - 画像埋め込み情報や get_text による抽出テキストも確認可能
+
+依存
+----
+- lib.app_paths.PATHS
+- lib.pdf.io: render_thumb_png, read_pdf_bytes, read_pdf_b64
+- lib.pdf.info: quick_pdf_info
+- lib.pdf.images: analyze_pdf_images, extract_embedded_images
+- lib.pdf.paths: rel_from
+- lib.pdf.text: analyze_pdf_texts
+- lib.pdf.ocr: run_ocr
+- lib.viewer.files: list_dirs, list_pdfs, is_ocr_name, dest_ocr_path
+- lib.viewer.pdf_flags: is_pdf_locked
+- lib.pdf.sidecar: sidecar_path_for, load_sidecar_dict, find_pdf_for_sidecar, update_sidecar_ocr
+
+サイドカー仕様（例）
+-------------------
+{
+  "type": "image_pdf",
+  "created_at": "2025-10-07T08:42:00+09:00",
+  "ocr": "unprocessed"  // "done" | "failed" | "skipped" | "locked" | "unprocessed"
+}
+
+注意
+----
+- 本ページは「画像PDF」を OCR でテキスト層付きPDF（*_ocr.pdf）へ変換する用途に特化。
+- ファイル名で *_skip を付けたもの、または sidecar.ocr=skipped のものは OCR 対象外。
+- 既に *_ocr.pdf が存在する原本PDFはスキップする。
+"""
+
+from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional, Tuple
-import time
-import re
+import json
 import streamlit as st
 
 # Optional: pdf.js ビューア
@@ -39,7 +95,7 @@ from lib.pdf.ocr import run_ocr
 from lib.viewer.files import list_dirs, list_pdfs, is_ocr_name, dest_ocr_path
 from lib.viewer.pdf_flags import is_pdf_locked
 
-# sidecar ユーティリティ
+# sidecar ユーティリティ（lib 下に切り出し済み）
 from lib.pdf.sidecar import (
     sidecar_path_for,
     load_sidecar_dict,
@@ -52,21 +108,102 @@ try:
     from lib.viewer.files import is_skip_name
 except Exception:
     def is_skip_name(p: Path) -> bool:
+        """ファイル名が *_skip.pdf かどうかを判定する簡易フォールバック。
+        
+        Parameters
+        ----------
+        p : Path
+            対象 PDF のパス
+
+        Returns
+        -------
+        bool
+            拡張子が .pdf かつベース名が *_skip で終わる場合 True
+        """
         return p.suffix.lower() == ".pdf" and p.stem.endswith("_skip")
+    
+# --- sidecarの ocr 状態を読む＆skip判定 ---
+def get_sidecar_ocr_state(p: Path) -> Optional[str]:
+    """与えられた PDF のサイドカーから OCR 状態文字列を取得する。
+    
+    Parameters
+    ----------
+    p : Path
+        対象 PDF のパス
 
+    Returns
+    -------
+    Optional[str]
+        サイドカーが存在し "ocr" キーがあればその値（例: "unprocessed", "done"...）
+        サイドカーが無い/壊れている場合は None
+    """
+    sc = sidecar_path_for(p)
+    if not sc.exists():
+        return None
+    try:
+        d = load_sidecar_dict(sc)
+        return d.get("ocr") if isinstance(d, dict) else None
+    except Exception:
+        return None
 
-# ---------- ページ設定 ----------
+def is_skipped_by_name_or_json(p: Path) -> bool:
+    """ファイル名または sidecar により OCR をスキップすべきか判定する。
+    
+    次のいずれかに該当すれば True:
+      - ファイル名が *_skip.pdf
+      - sidecar の "ocr" が "skipped"
+
+    Parameters
+    ----------
+    p : Path
+        対象 PDF のパス
+
+    Returns
+    -------
+    bool
+        スキップ条件に合致すれば True、そうでなければ False
+    """
+    if is_skip_name(p):
+        return True
+    return get_sidecar_ocr_state(p) == "skipped"
+
+# ---------- ちょいCSS ----------
 st.set_page_config(page_title="OCR処理", page_icon="📄", layout="wide")
+# st.markdown(
+#     """
+#     <style>
+#       .block-container {padding-top: 1rem; padding-bottom: 2rem; max-width: 1300px;}
+#       h1, h2, h3 {margin: 0.2rem 0 0.6rem 0;}
+#       .stCheckbox > label, label {line-height: 1.2;}
+#       .stMarkdown p {margin: 0.2rem 0;}
+#       .tight {margin-top: 0.25rem; margin-bottom: 0.25rem;}
+#       .divider {margin: .6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;}
+#       .muted {color:#6b7280;}
+#       .mono {font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;}
+#     </style>
+#     """,
+#     unsafe_allow_html=True,
+# )
 
 st.title("📄 OCR処理（organized/report/pdf から階層選択）")
 with st.expander("ℹ️ このページの役割と処理フロー（OCR処理・sidecar連携の全体像）", expanded=False):
     st.markdown(r"""
-## 概要
+## 概要（What this page does）
 **organized_docs_root/report/pdf** 配下で **画像PDF（image_pdf）** を対象に、  
 **OCR（OCRmyPDF）** を一括実行し、**sidecar（`<basename>_side.json`）** の `ocr` 状態を更新します。  
 UIは ①上位フォルダ → ②サブフォルダ（`ocr=unprocessed` 起点） → ③OCR実行 → ④選択 → ⑤サムネ → 👁ビューア の流れ。
 
-> ★ 進捗は「ファイル数」ではなく「**ページ数（全PDF合算）**」で表示します。
+---
+
+## 使う主なライブラリ / ユーティリティ
+- パス/列挙: `lib.app_paths.PATHS`, `list_dirs()`, `list_pdfs()`, `rel_from()`
+- PDF情報: `quick_pdf_info()`（種別 *テキストPDF/画像PDF* とページ数）
+- 画像分析: `analyze_pdf_images()`, `extract_embedded_images()`
+- テキスト抽出（OCRなし）: `analyze_pdf_texts()`
+- OCR実行: `run_ocr()`（OCRmyPDF ラッパー）
+- ロック判定: `is_pdf_locked()`（🔒パスワード保護）
+- 命名規約: `is_ocr_name()`（`*_ocr.pdf` 判定）, `dest_ocr_path()`（出力先パス）
+- sidecar: `sidecar_path_for()`, `load_sidecar_dict()`, `find_pdf_for_sidecar()`, `update_sidecar_ocr()`
 
 ---
 
@@ -77,9 +214,8 @@ UIは ①上位フォルダ → ②サブフォルダ（`ocr=unprocessed` 起点
   "created_at": "2025-10-07T08:42:00+09:00",
   "ocr": "unprocessed"  // "done" | "failed" | "skipped" | "locked" | "unprocessed"
 }
-```
 """)
-
+    
 st.info("使用ルート：organized_docs_root")
 
 # ========== ルート ==========
@@ -133,6 +269,7 @@ with st.sidebar:
     )
     resample_dpi = st.slider("再サンプリング時のDPI", 72, 300, 144, 12)
 
+    # ---------- ★ OCR 設定 ----------
     st.divider()
     st.header("OCR 設定")
     ocr_lang = st.text_input("言語（Tesseractのlang）", value="jpn+eng")
@@ -170,10 +307,11 @@ for i, d in enumerate(top_folders):
     else:
         st.session_state.sel_top.discard(d.name)
 
-st.markdown('<div style="margin:.6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;"></div>', unsafe_allow_html=True)
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ============================================================
-# ② サブフォルダ選択（side.json の ocr=unprocessed のみ表示）
+# ② サブフォルダ選択（<basename>_side.json の "ocr": "unprocessed" だけを見る）
+#    ※ ファイル名の後にページ数を表示
 # ============================================================
 st.subheader("② サブフォルダ選択（side.json の ocr=unprocessed のみ表示）")
 st.caption("フォルダ内の *_side.json を起点にし、'ocr': 'unprocessed' を1つ以上含むフォルダだけを表示します。PDFの種別判定はしません。")
@@ -182,6 +320,18 @@ SUB_COLS = 3
 shown_any = False
 
 def _safe_pages(p: Path) -> str:
+    """安全にページ数を取得する（失敗時は '?' を返す）。
+    
+    Parameters
+    ----------
+    p : Path
+        対象 PDF のパス
+
+    Returns
+    -------
+    str
+        ページ数（整数文字列）または "?"（取得失敗時）
+    """
     try:
         info = quick_pdf_info(str(p), p.stat().st_mtime_ns)
         pages = info.get("pages")
@@ -204,25 +354,30 @@ for tname in sorted(st.session_state.sel_top):
         if not sidecars:
             continue
 
-        unprocessed: list[tuple[Path, Path]] = []
+        # このフォルダ内で ocr=unprocessed の side.json を収集
+        unprocessed: list[tuple[Path, Path]] = []  # (pdf_path, sidecar_path)
         for sc in sidecars:
             data = load_sidecar_dict(sc)
             if not (isinstance(data, dict) and data.get("type") == "image_pdf"):
                 continue
             if data.get("ocr") == "unprocessed":
-                pdf = find_pdf_for_sidecar(sc)
+                pdf = find_pdf_for_sidecar(sc)  # 拡張子大小ゆらぎ対応
                 if pdf and not is_skip_name(pdf):
                     unprocessed.append((pdf, sc))
 
         if not unprocessed:
-            continue
+            continue  # このフォルダは非表示
 
         shown_any = True
+
+        # ✅ セル確保
         cell = cols_mid[col_idx % SUB_COLS]
 
+        # チェックボックス（件数付き）
         label = f"{sd.name}： unprocessed {len(unprocessed)} 件"
         checked = cell.checkbox(label, key=f"mid_{tname}/{sd.name}")
 
+        # 📄 ファイル名一覧（ベース名＋ページ数を最大 N 件表示）
         max_show = 20
         lines = []
         for pdf, _sc in unprocessed[:max_show]:
@@ -231,9 +386,8 @@ for tname in sorted(st.session_state.sel_top):
 
         if lines:
             cell.markdown(
-                "<div style='margin-left:1.8rem; margin-top:-0.3rem; line-height:1.2; color:#555; "
-                "font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace;'>"
-                + "<br>".join(lines)
+                "<div style='margin-left:1.8rem; margin-top:-0.3rem; line-height:1.2; color:#555;'>"
+                + "<br>".join([f"<span class='mono'>{ln}</span>" for ln in lines])
                 + "</div>",
                 unsafe_allow_html=True,
             )
@@ -250,10 +404,10 @@ for tname in sorted(st.session_state.sel_top):
 if not shown_any:
     st.info("ocr=unprocessed の side.json を含むフォルダは見つかりませんでした。")
 
-st.markdown('<div style="margin:.6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;"></div>', unsafe_allow_html=True)
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ============================================================
-# ③ OCR 一括実行（ページ進捗：全PDF合算）
+# ③ OCR 一括実行（成功→side.json=done、失敗→failed）
 # ============================================================
 st.subheader("③ OCR（画像PDF → テキスト層付きPDF）")
 st.caption(
@@ -262,9 +416,8 @@ st.caption(
 )
 
 summary_lines: List[str] = []
-targets: List[Tuple[Path, int]] = []  # (pdf_path, pages)
 total_targets = 0
-total_pages_all = 0
+total_skipped_exist = 0
 
 for mid in sorted(st.session_state.sel_mid):
     tname, sname = mid.split("/", 1)
@@ -277,10 +430,11 @@ for mid in sorted(st.session_state.sel_mid):
     exist_ocr = 0
 
     for p in pdfs:
+        # *_skip / *_ocr / 🔒保護PDF は除外
         if is_skip_name(p) or is_ocr_name(p) or is_pdf_locked(p):
             continue
 
-        # sidecar の ocr=skipped も除外
+        # ★ sidecar の ocr=skipped も除外
         try:
             sc = sidecar_path_for(p)
             if sc.exists():
@@ -290,6 +444,7 @@ for mid in sorted(st.session_state.sel_mid):
         except Exception:
             pass
 
+        # 種別チェック
         try:
             info = quick_pdf_info(str(p), p.stat().st_mtime_ns)
             if info.get("kind") == "画像PDF":
@@ -301,26 +456,15 @@ for mid in sorted(st.session_state.sel_mid):
         except Exception:
             pass
 
-    # このフォルダの対象を積む（ページ数も積む）
-    for p in img_list:
-        try:
-            info = quick_pdf_info(str(p), p.stat().st_mtime_ns)
-            pages = int(info.get("pages") or 0)
-        except Exception:
-            pages = 0
-        targets.append((p, pages))
-        total_pages_all += max(pages, 0)
-
     total_targets += len(img_list)
+    total_skipped_exist += exist_ocr
     summary_lines.append(f"- /{tname}/{sname}：対象 {len(img_list)} 件（既存 _ocr: {exist_ocr} 件）")
 
 if not summary_lines:
     st.caption("（②でサブフォルダを選ぶと、ここにOCR対象のサマリーが表示されます）")
 else:
     st.markdown("**対象サマリー**")
-    st.markdown("<div style='font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace;'>"
-                + "<br>".join(summary_lines) + "</div>", unsafe_allow_html=True)
-    st.caption(f"📄 合計ページ数（見積り）: {total_pages_all} ページ / 対象ファイル: {total_targets} 件")
+    st.markdown("<div class='mono'>" + "<br>".join(summary_lines) + "</div>", unsafe_allow_html=True)
 
 col_ocr_btn1, col_ocr_btn2 = st.columns([1, 2])
 do_ocr = col_ocr_btn1.button("▶️ 選択サブフォルダをまとめてOCR実行", use_container_width=True)
@@ -328,12 +472,8 @@ if total_targets == 0 and summary_lines:
     col_ocr_btn2.info("OCRすべき新規の画像PDFはありません（すでに _ocr が存在、または ⏭ / 🔒 が指定されています）。")
 
 if do_ocr and st.session_state.sel_mid:
-    # ★ ページ進捗：全体
-    global_prog = st.progress(0, text="準備中…（ページ進捗）")
-
-    done_files = 0
-    done_pages = 0
-
+    prog = st.progress(0, text="準備中…")
+    done = 0
     failed: List[str] = []
     created: List[str] = []
     skipped_locked: List[str] = []
@@ -342,29 +482,17 @@ if do_ocr and st.session_state.sel_mid:
 
     with st.status("OCR 実行中…", expanded=True) as status:
         left, right = st.columns([3, 2])
-        log_box = left.empty()
+        log = left.container()
         panel = right.empty()
 
-        # 左ログ（末尾だけ保持）
-        logbuf: List[str] = []
-
-        def _push_log(line: str) -> None:
-            if not line:
-                return
-            logbuf.append(line)
-            if len(logbuf) > 200:
-                del logbuf[:-200]
-            log_box.code("\n".join(logbuf), language="text")
-
-        _push_log(f"言語: {ocr_lang} | optimize={ocr_optimize} | jobs={ocr_jobs} | rotate_pages={ocr_rotate}")
+        log.write(f"言語: `{ocr_lang}` ｜ optimize={ocr_optimize} ｜ jobs={ocr_jobs} ｜ rotate_pages={ocr_rotate}")
         if ocr_sidecar:
-            _push_log("Sidecar: 有効（.txt も出力）")
+            log.write("Sidecar: 有効（.txt も出力）")
 
-        # 対象は「現在の sel_mid」から都度回す（skips も正しく反映するため）
         for mid in sorted(st.session_state.sel_mid):
             tname, sname = mid.split("/", 1)
             sdir = pdf_root / tname / sname
-            _push_log(f"--- /{tname}/{sname} ---")
+            log.markdown(f"**/{tname}/{sname}**")
 
             for p in list_pdfs(sdir):
                 # *_ocr は対象外
@@ -373,10 +501,12 @@ if do_ocr and st.session_state.sel_mid:
 
                 relp = str(rel_from(p, pdf_root))
 
-                # ⏭ 名前/sidecar によるスキップ
+                # ⏭ ファイル名/sidecar によるスキップ
                 if is_skip_name(p):
                     skipped_sidecar.append(relp)
-                    panel.markdown(f"**スキップ**\n\n- ⏭ *_skip: `{relp}`")
+                    panel.markdown(
+                        f"**現在の状況**\n\n- ⏭ *_skip 名のためスキップ: `{relp}`\n- 進捗: {done}/{max(total_targets,1)}"
+                    )
                     continue
                 try:
                     sc = sidecar_path_for(p)
@@ -384,94 +514,55 @@ if do_ocr and st.session_state.sel_mid:
                         d = load_sidecar_dict(sc)
                         if isinstance(d, dict) and d.get("ocr") == "skipped":
                             skipped_sidecar.append(relp)
-                            panel.markdown(f"**スキップ**\n\n- ⏭ sidecar=skipped: `{relp}`")
+                            panel.markdown(
+                                f"**現在の状況**\n\n- ⏭ sidecar=skipped のためスキップ: `{relp}`\n- 進捗: {done}/{max(total_targets,1)}"
+                            )
                             continue
                 except Exception:
                     pass
 
-                # 🔒 保護PDF
+                # 🔒 保護PDF → sidecar を 'locked' に更新してスキップ
                 if is_pdf_locked(p):
                     try:
                         update_sidecar_ocr(p, "locked")
-                        _push_log(f"🔒 locked: {relp} → side.json='locked'")
+                        log.write(f"🔒 locked: `{relp}` → side.json を 'locked' に更新")
                     except Exception as e:
-                        _push_log(f"⚠️ locked side.json 更新失敗: {relp} — {e}")
+                        log.write(f"⚠️ locked: `{relp}` → side.json 更新失敗: {e}")
                     skipped_locked.append(relp)
-                    panel.markdown(f"**スキップ**\n\n- 🔒 保護PDF: `{relp}`")
+                    panel.markdown(
+                        f"**現在の状況**\n\n- 🔒 保護PDFをスキップ: `{relp}`\n- 進捗: {done}/{max(total_targets,1)}"
+                    )
                     continue
 
-                # 種別チェック
+                # 画像PDF以外はスキップ
                 try:
                     info = quick_pdf_info(str(p), p.stat().st_mtime_ns)
                     if info.get("kind") != "画像PDF":
-                        panel.markdown(f"**スキップ**\n\n- 画像PDF以外: `{relp}`")
+                        panel.markdown(
+                            f"**現在の状況**\n\n- スキップ（画像PDF以外）: `{relp}`\n- 進捗: {done}/{max(total_targets,1)}"
+                        )
                         continue
-                    file_pages = int(info.get("pages") or 0)
                 except Exception:
-                    panel.markdown(f"**スキップ**\n\n- 判定不能: `{relp}`")
+                    panel.markdown(
+                        f"**現在の状況**\n\n- スキップ（判定不能）: `{relp}`\n- 進捗: {done}/{max(total_targets,1)}"
+                    )
                     continue
 
                 # 既に *_ocr.pdf があるならスキップ
                 dst = dest_ocr_path(p)
                 if dst.exists():
                     skipped_exists.append(relp)
-                    panel.markdown(f"**スキップ**\n\n- 既存 _ocr: `{relp}`")
+                    panel.markdown(
+                        f"**現在の状況**\n\n- 既存のためスキップ: `{relp}`\n- 進捗: {done}/{max(total_targets,1)}"
+                    )
                     continue
 
-                # ★ ここから OCR 実行（ページ進捗）
-                # --- progress callback（ページ進捗 → 全体進捗へ合算）---
-                # nonlocal はトップレベルでは使えないので、mutable な dict で保持する
-                _page_state = {"cur": 0, "total": max(int(file_pages), 1)}
-
-                def progress_cb(msg: str, frac: Optional[float] = None) -> None:
-                    """run_ocr() からの進捗コールバック（msg, frac=0.0〜1.0）。
-                    CLI ログ由来の msg（例: '7/42 ページ処理中'）も拾って表示する。
-                    """
-                    # 1) (cur/total) を msg から拾えれば優先
-                    m = re.search(r"(\d+)\s*/\s*(\d+)", str(msg)) if msg else None
-                    if m:
-                        try:
-                            cur = int(m.group(1))
-                            tot = int(m.group(2))
-                            if tot > 0:
-                                _page_state["total"] = tot
-                                _page_state["cur"] = max(0, min(cur, tot))
-                        except Exception:
-                            pass
-                    # 2) frac が来ていて、まだ cur が更新されていなければ推定
-                    if frac is not None and (not m):
-                        try:
-                            f = float(frac)
-                            f = 0.0 if f < 0.0 else 1.0 if f > 1.0 else f
-                            _page_state["cur"] = int(round(f * _page_state["total"]))
-                        except Exception:
-                            pass
-
-                    # 3) 表示用の数値を組み立て
-                    cur = int(_page_state.get("cur", 0))
-                    tot = int(_page_state.get("total", max(int(file_pages), 1)))
-                    cur = max(0, min(cur, tot))
-                    pct = int((cur / max(tot, 1)) * 100)
-
-                    # 4) 右ペイン：ファイル内ページ進捗 + 全体ファイル進捗
-                    panel.markdown(
-                        f"**現在の状況**\n\n"
-                        f"📄 処理中: `{relp}`\n"
-                        f"📊 ページ進捗: {cur} / {tot} ({pct}%)\n"
-                        f"📦 ファイル進捗: {done} / {max(total_targets,1)}"
-                    )
-
-                    # 5) 全体ページ進捗バー（ページ単位で合算）
-                    try:
-                        global_prog.progress(
-                            min((pages_base + cur) / max(total_pages_all, 1), 1.0),
-                            text=f"Pages {pages_base + cur}/{total_pages_all}（{pct}% of current file）"
-                        )
-                    except Exception:
-                        pass
+                # OCR 実行
                 try:
+                    panel.markdown(
+                        f"**現在の状況**\n\n- ⏳ 処理中: `{relp}`\n- 進捗: {done}/{max(total_targets,1)}"
+                    )
                     sidecar_txt_path: Optional[Path] = dst.with_suffix(".txt") if ocr_sidecar else None
-                    panel.markdown(f"**開始**\n\n- `{relp}`（{file_pages}p）")
                     run_ocr(
                         src=p,
                         dst=dst,
@@ -480,31 +571,24 @@ if do_ocr and st.session_state.sel_mid:
                         jobs=int(ocr_jobs),
                         rotate_pages=bool(ocr_rotate),
                         sidecar_path=sidecar_txt_path,
-                        progress_cb=progress_cb,  # ★ CLI 優先で Page x/y が来る
+                        progress_cb=lambda s: panel.markdown(f"**現在の状況**\n\n- ⏳ {s}"),
                     )
                     created.append(str(rel_from(dst, pdf_root)))
-                    update_sidecar_ocr(p, "done")
-                    _push_log(f"✅ 生成: {rel_from(dst, pdf_root)}")
-
-                except Exception as e:
-                    update_sidecar_ocr(p, "failed")
-                    failed.append(f"{relp} → {e}")
-                    _push_log(f"❌ 失敗: {relp} — {e}")
-
-                finally:
-                    # ファイル完了：全体ページを加算（ページ数が取れなければ 0）
-                    done_files += 1
-                    done_pages += max(file_pages, 0)
-
-                    denom = max(total_pages_all, 1)
-                    global_prog.progress(min(done_pages / denom, 1.0),
-                                         text=f"ページ進捗 {done_pages}/{denom}（{int(100*done_pages/denom)}%）")
+                    log.write(f"✅ 生成: `{rel_from(dst, pdf_root)}`")
+                    update_sidecar_ocr(p, "done")  # 成功 → done
                     panel.markdown(
-                        f"**完了**\n\n"
-                        f"- 📄 `{relp}`\n"
-                        f"- 📚 全体: {done_pages}/{denom} ページ\n"
-                        f"- 📦 ファイル: {done_files}/{max(total_targets,1)}"
+                        f"**現在の状況**\n\n- ✅ 完了: `{rel_from(dst, pdf_root)}`\n- 進捗: {done+1}/{max(total_targets,1)}"
                     )
+                except Exception as e:
+                    update_sidecar_ocr(p, "failed")  # 失敗 → failed
+                    failed.append(f"{relp} → {e}")
+                    log.write(f"❌ 失敗: `{relp}` — {e}")
+                    panel.markdown(
+                        f"**現在の状況**\n\n- ❌ 失敗: `{relp}`\n- 進捗: {done+1}/{max(total_targets,1)}"
+                    )
+                finally:
+                    done += 1
+                    prog.progress(min(done / max(total_targets, 1), 1.0), text=f"OCR {done}/{max(total_targets,1)}")
 
         status.update(label="OCR 完了", state="complete")
 
@@ -527,7 +611,7 @@ if do_ocr and st.session_state.sel_mid:
     with st.expander("❌ 失敗ログ", expanded=False):
         st.text("\n".join(failed) if failed else "（なし）")
 
-st.markdown('<div style="margin:.6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;"></div>', unsafe_allow_html=True)
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ============================================================
 # ④ PDFファイル選択
@@ -550,12 +634,13 @@ for mid in sorted(st.session_state.sel_mid):
         locked = is_pdf_locked(p)
 
         if locked:
+            kind = "保護（要パスワード）"
             pages = "?"
             badge = "🔒 保護PDF"
         else:
             info = quick_pdf_info(str(p), p.stat().st_mtime_ns)
-            pages = int(info.get("pages") or 0)
             kind = str(info.get("kind") or "不明")
+            pages = int(info.get("pages") or 0)
             if is_ocr_name(p) and kind == "画像PDF":
                 badge = "✨ OCR後の画像PDF"
             elif is_skip_name(p):
@@ -619,7 +704,7 @@ else:
                             else ("🔤 テキストPDF" if info.get('kind') == 'テキストPDF'
                                   else ("🖼 画像PDF" if info.get('kind') == '画像PDF' else "❓ 不明"))
                 cols_thumb[c].markdown(
-                    f"<div style='margin-top:.25rem; font-size:12px;color:#555;'>🧾 <b>{badge}</b>・📄 {info.get('pages','?')}ページ</div>",
+                    f"<div class='tight' style='font-size:12px;color:#555;'>🧾 <b>{badge}</b>・📄 {info.get('pages','?')}ページ</div>",
                     unsafe_allow_html=True,
                 )
             except Exception:
@@ -627,7 +712,7 @@ else:
             if cols_thumb[c].button("👁 開く", key=f"open_{rel}", use_container_width=True):
                 st.session_state.pdf_selected = rel
 
-st.markdown('<div style="margin:.6rem 0 1rem 0; border-bottom: 1px solid #e5e7eb;"></div>', unsafe_allow_html=True)
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ============================================================
 # 👁 ビューア

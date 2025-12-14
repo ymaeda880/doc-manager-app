@@ -25,6 +25,10 @@ from lib.viewer.files import list_dirs, list_pdfs, is_ocr_name, dest_ocr_path
 from lib.pdf.info import quick_pdf_info
 from lib.pdf.paths import rel_from
 
+# 説明 expander の呼び出し（※ 事前に lib/pdf_organization/explanation.py が存在すること）
+from lib.pdf_organization.explanation import render_pdf_organization_expander
+
+
 # *_skip.pdf 検出（存在しない環境用のフォールバックを内蔵）
 try:
     from lib.viewer.files import is_skip_name
@@ -37,6 +41,11 @@ except Exception:
 # ------------------------------------------------------------
 st.set_page_config(page_title="PDF整理（画像PDFに sidecar 付与）", page_icon="🧩", layout="wide")
 st.title("🧩 PDF整理 — 画像PDFに sidecar JSON を付与")
+
+# ------------------------------------------------------------
+# 説明 expander（このアプリのロジックと使い方）
+# ------------------------------------------------------------
+render_pdf_organization_expander()
 
 with st.expander("ℹ️ このページの役割と使い方（sidecar 付与・判定フロー）", expanded=False):
     st.markdown("""
